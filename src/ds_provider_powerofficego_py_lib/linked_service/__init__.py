@@ -22,6 +22,9 @@ Example:
     >>> linked_service.test_connection()
 """
 
-from .powerofficego import PowerOfficeGoLinkedService
+from .powerofficego import (
+    PowerOfficeGoLinkedService,
+    PowerOfficeGoLinkedServiceSettings,
+)
 
 __all__ = ["PowerOfficeGoLinkedService", "PowerOfficeGoLinkedServiceSettings"]
