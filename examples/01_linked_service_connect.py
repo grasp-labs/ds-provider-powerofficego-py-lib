@@ -19,8 +19,8 @@ Prerequisites:
 from __future__ import annotations
 
 import os
-from uuid import uuid4
 import logging
+from uuid import uuid4
 
 from ds_common_logger_py_lib import Logger
 from ds_provider_powerofficego_py_lib.linked_service import PowerOfficeGoLinkedService, PowerOfficeGoLinkedServiceSettings

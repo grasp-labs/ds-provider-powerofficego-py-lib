@@ -46,6 +46,10 @@ def test_settings_headers_and_basic_override():
     settings = PowerOfficeGoLinkedServiceSettings(
         application_key="appkey", client_id="clientid", subscription_key="subkey", headers=custom_headers, basic=custom_basic
     )
+    service = PowerOfficeGoLinkedService(
+        id="12345678-1234-5678-1234-1234567890ab", name="pogo-linked-service", version="v1.0.0", settings=settings
+    )
+    assert service is not None
     assert settings.headers == custom_headers
     assert settings.basic == custom_basic
 

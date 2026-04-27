@@ -9,19 +9,28 @@ to the PowerOfficeGo API. It includes the necessary configuration and
 authentication details required to establish a connection with the PowerOfficeGo service.
 
 Example:
+    >>> from uuid import UUID
+    >>> linked_service = PowerOfficeGoLinkedService(
+    ...     id=UUID("12345678-1234-5678-1234-1234567890ab"),
+    ...     name="pogo-linked-service",
+    ...     version="v1.0.0",
+    ...     settings=PowerOfficeGoLinkedServiceSettings(
+    ...         application_key="my-application-key",
+    ...         client_id="my-client-id",
+    ...         subscription_key="my-subscription-key",
+    ...     ),
+    ... )
+    >>> linked_service.connect()
 """
 
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from ds_common_logger_py_lib import Logger
 from ds_protocol_http_py_lib import HttpLinkedService, HttpLinkedServiceSettings
 from ds_protocol_http_py_lib.enums import AuthType
 from ds_protocol_http_py_lib.linked_service import BasicAuthSettings
 
 from ..enums import ResourceType
-
-logger = Logger.get_logger(__name__, package=True)
 
 
 @dataclass(kw_only=True)
@@ -99,6 +108,6 @@ class PowerOfficeGoLinkedService(
         """
         if self.settings.headers is None:
             self.settings.headers = {"Ocp-Apim-Subscription-Key": self.settings.subscription_key}
-        if self.settings.basic is None:
+        if self.settings.auth_type == AuthType.BASIC and self.settings.basic is None:
             self.settings.basic = BasicAuthSettings(username=self.settings.application_key, password=self.settings.client_id)
         super().__post_init__()
