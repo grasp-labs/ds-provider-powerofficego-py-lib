@@ -46,21 +46,14 @@ def main() -> None:
     linked_service = PowerOfficeGoLinkedService(
         id=uuid4(),
         name="example-pogo-linked-service",
-        version="1.0.0",
+        version="v1.0.0",
         settings=settings,
     )
 
     try:
         # Connect the linked service
         logger.info("Testing connection to PowerOfficeGo linked service...")
-        success, message = linked_service.test_connection()
-
-        if success:
-            logger.info("✓ Connection test successful!")
-            logger.debug("Message: %s", message)
-        else:
-            logger.error("✗ Connection test failed: %s", message)
-            return
+        linked_service.connect()
 
     except ConnectionError as exc:
         logger.error("Failed to connect to PowerOfficeGo: %s", exc)

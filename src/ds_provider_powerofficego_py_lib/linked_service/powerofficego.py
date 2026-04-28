@@ -23,12 +23,13 @@ Example:
     >>> linked_service.connect()
 """
 
+import base64
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
 from ds_protocol_http_py_lib import HttpLinkedService, HttpLinkedServiceSettings
 from ds_protocol_http_py_lib.enums import AuthType
-from ds_protocol_http_py_lib.linked_service import BasicAuthSettings
+from ds_protocol_http_py_lib.linked_service import OAuth2AuthSettings
 
 from ..enums import ResourceType
 
@@ -62,11 +63,11 @@ class PowerOfficeGoLinkedServiceSettings(HttpLinkedServiceSettings):
     api_version: str = "v2"
     """API version for PowerOfficeGo API."""
 
-    auth_type: AuthType = AuthType.BASIC
+    auth_type: AuthType = AuthType.OAUTH2
     """Authentication type for PowerOfficeGo API."""
 
-    basic: BasicAuthSettings | None = None
-    """Basic authentication settings for PowerOfficeGo API."""
+    oauth2: OAuth2AuthSettings | None = None
+    """OAuth2 authentication settings for PowerOfficeGo API."""
 
 
 PowerOfficeGoLinkedServiceSettingsType = TypeVar(
@@ -106,8 +107,15 @@ class PowerOfficeGoLinkedService(
         This method is called after the dataclass has been initialized. It can be used
         to perform any additional setup or validation required for the PowerOfficeGo linked service.
         """
+        base64_encoded_credentials = base64.b64encode(
+            f"{self.settings.application_key}:{self.settings.client_id}".encode()
+        ).decode("utf-8")
         if self.settings.headers is None:
-            self.settings.headers = {"Ocp-Apim-Subscription-Key": self.settings.subscription_key}
-        if self.settings.auth_type == AuthType.BASIC and self.settings.basic is None:
-            self.settings.basic = BasicAuthSettings(username=self.settings.application_key, password=self.settings.client_id)
+            self.settings.headers = {
+                "Authorization": f"Basic {base64_encoded_credentials}",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Ocp-Apim-Subscription-Key": self.settings.subscription_key,
+            }
+        if self.settings.auth_type == AuthType.OAUTH2 and self.settings.oauth2 is None:
+            self.settings.oauth2 = OAuth2AuthSettings(token_endpoint=self.settings.token_endpoint, client_id="", client_secret="")  # nosec B106
         super().__post_init__()
