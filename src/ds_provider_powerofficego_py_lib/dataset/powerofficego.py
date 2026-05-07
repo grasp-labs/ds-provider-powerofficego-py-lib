@@ -160,7 +160,7 @@ class PowerOfficeGoDataset(
             logger.info(f"Resuming from checkpoint with from_date: {self.checkpoint['from_date']}")
             self.settings.read.from_date = self.checkpoint["from_date"]
 
-        page = self.checkpoint.get("last_page", 0) + 1 if self.checkpoint else 0
+        page = self.checkpoint.get("last_page", 0) + 1 if self.checkpoint else 1
         logger.info("%s load from page %s", "Resuming incremental" if self.checkpoint else "Starting full", page)
 
         all_records: list[dict[str, Any]] = []
@@ -251,8 +251,8 @@ class PowerOfficeGoDataset(
             dict[str, Any]: A dictionary of query parameters for the API request.
         """
         params: dict[str, Any] = {
-            "pageNumber": page,
-            "pageSize": self.settings.read.page_size,
+            "PageNumber": page,
+            "PageSize": self.settings.read.page_size,
         }
         if self.settings.read.from_date:
             params["fromDate"] = self.settings.read.from_date
