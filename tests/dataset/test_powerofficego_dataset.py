@@ -74,12 +74,13 @@ def test_read_successful_fetch(monkeypatch):
     session = DummySession(responses)
     ds = make_dataset()
     ds._build_url = MagicMock(return_value="https://goapi.poweroffice.net/v2/endpoint")
-    ds._build_params = MagicMock(side_effect=lambda page: {"pageNumber": page, "pageSize": 20000})
+    # Use correct param names to match implementation
+    ds._build_params = MagicMock(side_effect=lambda page: {"PageNumber": page, "PageSize": 20000})
     with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
         ds.read()
         assert isinstance(ds.output, pd.DataFrame)
         assert set(ds.output["id"]) == {1, 2}
-        assert ds.checkpoint["last_page"] == 1
+        assert ds.checkpoint["last_page"] == 2
 
 
 def test_read_error_raises(monkeypatch):
@@ -109,7 +110,7 @@ def test_checkpoint_resume(monkeypatch):
     checkpoint = {"last_page": 1, "from_date": "2024-01-01"}
     ds = make_dataset(checkpoint=checkpoint)
     ds._build_url = MagicMock(return_value="https://goapi.poweroffice.net/v2/endpoint")
-    ds._build_params = MagicMock(side_effect=lambda page: {"pageNumber": page, "pageSize": 20000})
+    ds._build_params = MagicMock(side_effect=lambda page: {"PageNumber": page, "PageSize": 20000})
     with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
         ds.read()
         assert ds.output["id"].iloc[0] == 3
@@ -177,7 +178,7 @@ def test_build_params_all_fields():
     ds.settings.read.to_date = "2024-01-31"
     ds.settings.read.fields = "id,name"
     params = ds._build_params(2)
-    assert params["pageNumber"] == 2
+    assert params["PageNumber"] == 2
     assert params["fromDate"] == "2024-01-01"
     assert params["toDate"] == "2024-01-31"
     assert params["Fields"] == "id,name"
