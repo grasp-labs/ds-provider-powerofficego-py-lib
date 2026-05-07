@@ -4,3 +4,11 @@
 
 This module contains dataset-related classes and functions for the PowerOfficeGo provider.
 """
+
+from .powerofficego import PowerOfficeGoDataset, PowerOfficeGoDatasetSettings, ReadSettings
+
+__all__ = [
+    "PowerOfficeGoDataset",
+    "PowerOfficeGoDatasetSettings",
+    "ReadSettings",
+]

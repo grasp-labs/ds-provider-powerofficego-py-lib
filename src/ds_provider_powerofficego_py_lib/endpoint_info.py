@@ -20,15 +20,15 @@ class EndpointInfo:
         self.endpoint = endpoint
 
     @staticmethod
-    def get_endpoint_for_product(data_product: str) -> str | None:
+    def get_endpoint_for_product(data_product: str) -> str:
         """
-        Get the EndpointInfo for a given data product.
+        Get the endpoint for a given data product.
         If the data product is not found in the ENDPOINTS mapping, it returns the data product name as endpoint.
 
         Args:
             data_product (str): The name of the data product.
         Returns:
-            str | None: The endpoint URL if found, otherwise the data product name as endpoint.
+            str: The endpoint URL if found, otherwise the data product name as endpoint.
         """
         endpoint_info = ENDPOINTS.get(data_product)
         return endpoint_info.endpoint if endpoint_info else data_product

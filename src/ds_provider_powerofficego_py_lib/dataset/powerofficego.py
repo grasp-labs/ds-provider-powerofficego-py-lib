@@ -31,25 +31,35 @@ logger = Logger.get_logger(__name__, package=True)
 class ReadSettings(Serializable):
     """
     Settings for reading from PowerOfficeGo dataset.
+
+    Attributes:
+        page_size (int): Number of records to read per page. Default is 20,000.
+        from_date (str | None): Start date for filtering records. Format: 'YYYY-MM-DDTHH:MM:SS'. Optional.
+        to_date (str | None): End date for filtering records. Format: 'YYYY-MM-DDTHH:MM:SS'. Optional.
+        fields (str | None): Comma-separated list of fields to include in the response. Optional.
     """
 
     page_size: int = 20000
     """Number of records to read per page. Default is 20,000."""
 
     from_date: str | None = None
-    """Start date for filtering records. Format: 'YYYY-MM-DDTHH:MM:SS'. Optional."""
+    """Start date for filtering records. Format: 'YYYY-MM-DD'. Optional."""
 
     to_date: str | None = None
-    """End date for filtering records. Format: 'YYYY-MM-DDTHH:MM:SS'. Optional."""
+    """End date for filtering records. Format: 'YYYY-MM-DD'. Optional."""
 
     fields: str | None = None
     """Comma-separated list of fields to include in the response. Optional."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class PowerOfficeGoDatasetSettings(DatasetSettings):
     """
     Settings for PowerOfficeGo dataset.
+
+    Attributes:
+        data_product (str): Data product to read from PowerOfficeGo API. Required. Must match product name as used in DS Config.
+        read (ReadSettings): Settings for reading from PowerOfficeGo dataset. Contains pagination and filtering options.
     """
 
     data_product: str
@@ -69,7 +79,13 @@ class PowerOfficeGoDataset(
     Generic[PowerOfficeGoLinkedServiceType, PowerOfficeGoDatasetSettingsType],
 ):
     """
-    Doc string here.
+    PowerOfficeGoDataset represents a dataset for the PowerOfficeGo provider.
+
+    Attributes:
+        linked_service (PowerOfficeGoLinkedServiceType): The linked service used to connect to PowerOfficeGo.
+        settings (PowerOfficeGoDatasetSettingsType): The settings for the dataset, including data product and read settings.
+        serializer (PandasSerializer | None): The serializer used for the dataset. Defaults to JSON format.
+        deserializer (PandasDeserializer | None): The deserializer used for the dataset. Defaults to JSON format.
     """
 
     linked_service: PowerOfficeGoLinkedServiceType
@@ -187,11 +203,10 @@ class PowerOfficeGoDataset(
                     if not next_page:
                         logger.info("Last page reached based on pagination header. Ending pagination.")
                         break
-                if not pagination_header:
+                else:
                     logger.warning("Pagination header not found in response. Ending pagination to avoid infinite loop.")
                     break
 
-                last_successful_page = page
                 page += 1
 
         except Exception as exc:

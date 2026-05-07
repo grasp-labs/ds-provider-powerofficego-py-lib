@@ -1,6 +1,6 @@
 """
-**File:** ``test_powerofficego.py``
-**Region:** ``tests/dataset/test_powerofficego``
+**File:** ``test_powerofficego_dataset.py``
+**Region:** ``tests/dataset/test_powerofficego_dataset``
 
 This module contains tests for the PowerOfficeGo dataset implementation. It includes tests for
 data fetching, pagination handling, and error handling to ensure that the PowerOfficeGo dataset
