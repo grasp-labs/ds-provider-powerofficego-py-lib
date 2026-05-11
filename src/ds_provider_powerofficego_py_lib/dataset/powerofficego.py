@@ -34,22 +34,22 @@ class ReadSettings(Serializable):
 
     Attributes:
         page_size (int): Number of records to read per page. Default is 20,000.
-        from_date (str | None): Start date for filtering records. Format: 'YYYY-MM-DDTHH:MM:SS'. Optional.
-        to_date (str | None): End date for filtering records. Format: 'YYYY-MM-DDTHH:MM:SS'. Optional.
-        fields (str | None): Comma-separated list of fields to include in the response. Optional.
+        from_date (str | None): Start date for filtering records. Format: 'YYYY-MM-DD'. Optional.
+        to_date (str | None): End date for filtering records. Format: 'YYYY-MM-DD'. Optional.
+        fields (list[str] | None): List of fields to include in the response. Optional.
     """
 
     page_size: int = 20000
     """Number of records to read per page. Default is 20,000."""
 
-    from_date: str | None = None
-    """Start date for filtering records. Format: 'YYYY-MM-DD'. Optional."""
+    last_modified_date: str | None = None
+    """Filter records by last modified date. Format: 'YYYY-MM-DDTHH:MM:SS'. Optional."""
 
-    to_date: str | None = None
-    """End date for filtering records. Format: 'YYYY-MM-DD'. Optional."""
+    fields: list[str] | None = None
+    """List of fields to include in the response. Optional."""
 
-    fields: str | None = None
-    """Comma-separated list of fields to include in the response. Optional."""
+    filters: dict[str, Any] | None = None
+    """Additional filters for the API request. Optional."""
 
 
 @dataclass(kw_only=True)
@@ -172,9 +172,9 @@ class PowerOfficeGoDataset(
             ReadError: If there is an error during the data fetching process.
         """
         logger.info(f"Fetching data from PowerOfficeGo API for data product: {self.settings.data_product}")
-        if self.checkpoint and "from_date" in self.checkpoint:
-            logger.info(f"Resuming from checkpoint with from_date: {self.checkpoint['from_date']}")
-            self.settings.read.from_date = self.checkpoint["from_date"]
+        if self.checkpoint and "incremental" in self.checkpoint:
+            logger.info(f"Resuming from checkpoint with from_date: {self.checkpoint['incremental']['last_modified_date']}")
+            self.settings.read.last_modified_date = self.checkpoint["incremental"]["last_modified_date"]
 
         page = self.checkpoint.get("last_page", 0) + 1 if self.checkpoint else 1
         logger.info("%s load from page %s", "Resuming incremental" if self.checkpoint else "Starting full", page)
@@ -232,9 +232,8 @@ class PowerOfficeGoDataset(
         Checkpoint structure:
             {
                 "last_page": int,
+                "last_modified_date": str,
                 "page_size": int,
-                "to_date": str | None (ISO-8601 format),
-                "from_date": str | None (ISO-8601 format),
                 "data_product": str
             }
 
@@ -247,10 +246,11 @@ class PowerOfficeGoDataset(
             raise ValueError("Data product must be provided to build checkpoint.")
 
         checkpoint = {
+            "incremental": {
+                "last_modified_date": self.settings.read.last_modified_date,
+            },
             "last_page": last_page,
             "page_size": self.settings.read.page_size,
-            "to_date": self.settings.read.to_date,
-            "from_date": self.settings.read.from_date,
             "data_product": self.settings.data_product,
         }
         logger.debug(f"Built checkpoint: {checkpoint}")
@@ -269,12 +269,12 @@ class PowerOfficeGoDataset(
             "PageNumber": page,
             "PageSize": self.settings.read.page_size,
         }
-        if self.settings.read.from_date:
-            params["fromDate"] = self.settings.read.from_date
-        if self.settings.read.to_date:
-            params["toDate"] = self.settings.read.to_date
+        if self.settings.read.last_modified_date:
+            params["lastChangedDateTimeOffsetGreaterThan"] = self.settings.read.last_modified_date
         if self.settings.read.fields:
             params["Fields"] = self.settings.read.fields
+        if self.settings.read.filters:
+            params.update(self.settings.read.filters)
         return params
 
     def _build_url(self) -> str:
