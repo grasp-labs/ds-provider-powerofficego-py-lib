@@ -31,7 +31,9 @@ class EndpointInfo:
             str: The endpoint URL if found, otherwise the data product name as endpoint.
         """
         endpoint_info = ENDPOINTS.get(data_product)
-        return endpoint_info.endpoint if endpoint_info else data_product
+        if endpoint_info is not None:
+            return str(endpoint_info.endpoint)
+        return str(data_product)
 
 
 ENDPOINTS = {

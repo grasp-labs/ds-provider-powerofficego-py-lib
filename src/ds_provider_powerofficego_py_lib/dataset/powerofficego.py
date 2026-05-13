@@ -221,12 +221,12 @@ class PowerOfficeGoDataset(
         finally:
             self.output = pd.DataFrame(all_records)
             # On success, set last_page and last_modified_date
-            lastest = self.greatest_incremental_value(
+            latest = self.greatest_incremental_value(
                 [record.get("lastChangedDateTimeOffset") for record in all_records if record.get("lastChangedDateTimeOffset")],
                 kind="LastChangedDateTimeOffset",
             )
-            if lastest:
-                last_modified_date = lastest
+            if latest:
+                last_modified_date = latest
             self.checkpoint = self._build_checkpoint(
                 last_successful_page, last_modified_date=last_modified_date, update_incremental=True
             )
@@ -351,12 +351,12 @@ class PowerOfficeGoDataset(
         Returns:
             str: The constructed URL for the API request.
         """
-        base_url = self.linked_service.settings.host
-        api_version = self.linked_service.settings.api_version
-        endpoint = EndpointInfo.get_endpoint_for_product(self.settings.data_product)
-        url = f"{base_url}{api_version}/{endpoint}"
+        base_url = self.linked_service.settings.host.rstrip("/") + "/"
+        api_version = self.linked_service.settings.api_version.strip("/")
+        endpoint = str(EndpointInfo.get_endpoint_for_product(self.settings.data_product)).strip("/")
+        url = base_url + "/".join((api_version, endpoint))
         logger.debug(f"Constructed URL for PowerOfficeGo API request: {url}")
-        return url
+        return str(url)
 
     def close(self) -> None:
         """
