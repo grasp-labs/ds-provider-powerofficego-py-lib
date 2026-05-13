@@ -7,6 +7,7 @@ data fetching, pagination handling, and error handling to ensure that the PowerO
 functions correctly under various scenarios.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -15,6 +16,7 @@ from ds_resource_plugin_py_lib.common.resource.dataset.errors import ReadError
 from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
 
 from ds_provider_powerofficego_py_lib.dataset.powerofficego import PowerOfficeGoDataset, PowerOfficeGoDatasetSettings
+from ds_provider_powerofficego_py_lib.errors import InvalidIncrementalWatermarkException, UnsupportedIncrementalKindException
 from ds_provider_powerofficego_py_lib.linked_service.powerofficego import (
     PowerOfficeGoLinkedService,
     PowerOfficeGoLinkedServiceSettings,
@@ -68,19 +70,22 @@ def make_dataset(checkpoint=None, data_product="TestProduct"):
 def test_read_successful_fetch(monkeypatch):
     # Simulate two pages, then end
     responses = [
-        DummyResponse([{"id": 1}], headers={"X-Pagination": '{"nextPageLink": "exists"}'}),
-        DummyResponse([{"id": 2}], headers={"X-Pagination": "{}"}),
+        DummyResponse(
+            [{"id": 1, "lastChangedDateTimeOffset": "2024-01-01T00:00:00"}], headers={"X-Pagination": '{"nextPageLink": "exists"}'}
+        ),
+        DummyResponse([{"id": 2, "lastChangedDateTimeOffset": "2024-01-01T00:00:00"}], headers={"X-Pagination": "{}"}),
     ]
     session = DummySession(responses)
     ds = make_dataset()
     ds._build_url = MagicMock(return_value="https://goapi.poweroffice.net/v2/endpoint")
-    ds._build_params = MagicMock(side_effect=lambda page: {"PageNumber": page, "PageSize": 20000})
+    ds._build_params = MagicMock(side_effect=lambda page, last_modified_date=None: {"PageNumber": page, "PageSize": 20000})
     with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
         ds.read()
         assert isinstance(ds.output, pd.DataFrame)
         assert set(ds.output["id"]) == {1, 2}
         assert ds.checkpoint["last_page"] == 2
         assert "incremental" in ds.checkpoint
+        assert ds.checkpoint["incremental"]["last_modified_date"] == "2024-01-01T00:00:00"
 
 
 def test_read_error_raises(monkeypatch):
@@ -110,11 +115,12 @@ def test_checkpoint_resume(monkeypatch):
     checkpoint = {"last_page": 1, "incremental": {"last_modified_date": "2024-01-01T00:00:00"}}
     ds = make_dataset(checkpoint=checkpoint)
     ds._build_url = MagicMock(return_value="https://goapi.poweroffice.net/v2/endpoint")
-    ds._build_params = MagicMock(side_effect=lambda page: {"PageNumber": page, "PageSize": 20000})
+    ds._build_params = MagicMock(side_effect=lambda page, last_modified_date=None: {"PageNumber": page, "PageSize": 20000})
     with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
         ds.read()
         assert ds.output["id"].iloc[0] == 3
         assert ds.checkpoint["last_page"] == 2
+        assert "incremental" in ds.checkpoint
 
 
 def test_create_not_supported():
@@ -161,26 +167,25 @@ def test_purge_not_supported():
 
 def test_build_checkpoint_success():
     ds = make_dataset()
-    cp = ds._build_checkpoint(5)
+    cp = ds._build_checkpoint(5, "2024-01-01T00:00:00", update_incremental=True)
     assert cp["last_page"] == 5
     assert cp["data_product"] == ds.settings.data_product
-    assert cp["incremental"]["last_modified_date"] == ds.settings.read.last_modified_date
+    assert cp["incremental"]["last_modified_date"] == "2024-01-01T00:00:00"
 
 
 def test_build_checkpoint_no_data_product():
     ds = make_dataset(data_product=None)
     with pytest.raises(ValueError):
-        ds._build_checkpoint(1)
+        ds._build_checkpoint(1, "2024-01-01T00:00:00", update_incremental=True)
 
 
 def test_build_params_all_fields():
     ds = make_dataset()
-    ds.settings.read.last_modified_date = "2024-01-01T00:00:00"
     ds.settings.read.fields = ["id", "name"]
     ds.settings.read.filters = {"CustomFilter": "value"}
-    params = ds._build_params(2)
+    params = ds._build_params(2, "2024-01-01T00:00:00")
     assert params["PageNumber"] == 2
-    assert params["lastChangedDateTimeOffsetGreaterThan"] == ds.settings.read.last_modified_date
+    assert params["lastChangedDateTimeOffsetGreaterThan"] == "2024-01-01T00:00:00"
     assert params["Fields"] == ["id", "name"]
     assert params["CustomFilter"] == "value"
 
@@ -194,6 +199,106 @@ def test_build_url():
     ):
         url = ds._build_url()
     assert "endpoint-path" in url
+
+
+def test_type_property():
+    ds = make_dataset()
+    assert ds.type.name == "POWEROFFICEGO_DATASET"
+
+
+def test_supports_checkpoint_property():
+    ds = make_dataset()
+    assert ds.supports_checkpoint is True
+
+
+def test__fetch_data_data_product_none():
+    ds = make_dataset(data_product=None)
+    session = MagicMock()
+    with pytest.raises((NotSupportedError, ValueError)):
+        ds._fetch_data(session)
+
+
+def test__fetch_data_no_pagination_header():
+    responses = [DummyResponse([{"id": 1, "lastChangedDateTimeOffset": "2024-01-01T00:00:00"}], headers={})]
+    session = DummySession(responses)
+    ds = make_dataset()
+    ds._build_url = MagicMock(return_value="https://goapi.poweroffice.net/v2/endpoint")
+    ds._build_params = MagicMock(side_effect=lambda page, last_modified_date=None: {"PageNumber": page, "PageSize": 20000})
+    with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
+        ds.read()
+        assert ds.output["id"].iloc[0] == 1
+        assert ds.checkpoint["last_page"] == 1
+
+
+def test_parse_iso8601_timestamp_fractional_no_tz():
+    ds = make_dataset()
+    # 7 digits, no timezone
+    ts = "2024-05-13T12:34:56.1234567"
+    dt = ds._parse_iso8601_timestamp(ts)
+    assert dt.microsecond == 123456
+
+
+def test_greatest_time_field_value_empty():
+    ds = make_dataset()
+    assert ds._greatest_time_field_value([]) is None
+
+
+def test_parse_iso8601_timestamp_basic():
+    ds = make_dataset()
+    # Basic UTC
+    ts = "2024-05-13T12:34:56Z"
+    dt = ds._parse_iso8601_timestamp(ts)
+    assert dt == datetime(2024, 5, 13, 12, 34, 56, tzinfo=timezone.utc)
+
+
+def test_parse_iso8601_timestamp_fractional():
+    ds = make_dataset()
+    # 7 digits, should truncate to 6
+    ts = "2024-05-13T12:34:56.1234567Z"
+    dt = ds._parse_iso8601_timestamp(ts)
+    assert dt.microsecond == 123456
+
+
+def test_parse_iso8601_timestamp_offset():
+    ds = make_dataset()
+    ts = "2024-05-13T12:34:56+02:00"
+    dt = ds._parse_iso8601_timestamp(ts)
+    assert dt.hour == 10  # UTC
+    assert dt.tzinfo == timezone.utc
+
+
+def test_parse_iso8601_timestamp_invalid():
+    ds = make_dataset()
+    with pytest.raises(InvalidIncrementalWatermarkException):
+        ds._parse_iso8601_timestamp("not-a-date")
+
+
+def test_greatest_time_field_value():
+    ds = make_dataset()
+    vals = ["2024-05-13T12:34:56Z", "2024-05-13T13:34:56Z", "2024-05-13T11:34:56Z"]
+    result = ds._greatest_time_field_value(vals)
+    assert result == "2024-05-13T13:34:56Z"
+
+
+def test_greatest_time_field_value_invalid():
+    ds = make_dataset()
+    vals = [123, "2024-05-13T13:34:56Z"]
+    with pytest.raises(InvalidIncrementalWatermarkException):
+        ds._greatest_time_field_value(vals)
+
+
+def test_greatest_incremental_value_time_field():
+    ds = make_dataset()
+    vals = ["2024-05-13T12:34:56Z", "2024-05-13T13:34:56Z"]
+    result = ds.greatest_incremental_value(vals, kind="LastChangedDateTimeOffset")
+    assert result == "2024-05-13T13:34:56Z"
+
+
+def test_greatest_incremental_value_unsupported():
+    ds = make_dataset()
+    vals = ["foo", "bar"]
+    with pytest.raises(UnsupportedIncrementalKindException):
+        ds.greatest_incremental_value(vals, kind="unknown_kind")
 
 
 def test_close():
@@ -211,3 +316,6 @@ def test__fetch_data_error(monkeypatch):
     ds._build_params = MagicMock(return_value={})
     with pytest.raises(ReadError):
         ds._fetch_data(session)
+    # Should set checkpoint with last_page only (no incremental)
+    assert "last_page" in ds.checkpoint
+    assert "incremental" not in ds.checkpoint
