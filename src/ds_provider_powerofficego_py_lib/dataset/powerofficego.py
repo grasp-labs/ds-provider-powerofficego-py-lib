@@ -37,9 +37,8 @@ class ReadSettings(Serializable):
 
     Attributes:
         page_size (int): Number of records to read per page. Default is 20,000.
-        from_date (str | None): Start date for filtering records. Format: 'YYYY-MM-DD'. Optional.
-        to_date (str | None): End date for filtering records. Format: 'YYYY-MM-DD'. Optional.
         fields (list[str] | None): List of fields to include in the response. Optional.
+        filters (dict[str, Any] | None): Additional filters for the API request. Optional.
     """
 
     page_size: int = 20000
@@ -105,24 +104,25 @@ class PowerOfficeGoDataset(
         """
         Whether this provider supports incremental loads via ``self.checkpoint``.
 
-        This implementation uses a simple dictionary-based checkpoint structure to
-        support resuming paginated reads:
+        The checkpoint is a dictionary that tracks pagination and incremental state:
 
-        - On a full load, ``self.checkpoint`` is expected to be empty (``{}``) or
-          ``None``. In this case, :meth:`read` starts from page ``1``.
-        - After each successfully read page, :meth:`read` sets
-          ``self.checkpoint = {"last_page": page}``, where ``page`` is the last
-          completed page number.
-        - On a subsequent run, if ``self.checkpoint`` contains a ``"last_page"``
-          entry, :meth:`read` resumes from ``last_page + 1`` and continues
-          fetching data from the PowerOfficeGo API.
+        - On a full load, ``self.checkpoint`` is expected to be empty (``{}``) or ``None``.
+          In this case, :meth:`read` starts from page ``1``.
+        - After each successfully read page, ``self.checkpoint`` is updated with at least ``{"last_page": page, ...}``.
+        - If incremental loading is possible (i.e., the data contains a ``lastChangedDateTimeOffset`` field),
+          the checkpoint will also include an ``incremental`` key with the latest observed value:
+           ``{"incremental": {"last_modified_date": ...}}``.
+        - On a subsequent run, if ``self.checkpoint`` contains a ``"last_page"`` entry,
+          :meth:`read` resumes from ``last_page + 1`` and continues fetching data from the PowerOfficeGo API.
+        - If ``self.checkpoint`` contains an ``incremental`` key, the loader will use the stored ``last_modified_date``
+          to filter for new/changed records.
 
-        This allows consumers to perform incremental loads by persisting and
-        reusing the checkpoint between executions, avoiding re-reading pages that
-        were already processed successfully.
+        This allows consumers to perform incremental loads by persisting and reusing
+        the checkpoint between executions, avoiding re-reading pages that were already processed successfully.
+        The checkpoint structure is designed to support both paginated and incremental (watermark-based) loading.
 
         Returns:
-             bool: True if checkpointing is supported, False otherwise.
+            bool: True if checkpointing is supported, False otherwise.
         """
         return True
 
@@ -135,10 +135,6 @@ class PowerOfficeGoDataset(
         """
         logger.info(f"Reading data from PowerOfficeGo dataset with settings: {self.settings}")
         session = self.linked_service.connection
-
-        if self.settings.data_product is None:
-            raise NotSupportedError("Data product must be provided.")
-
         self._fetch_data(session=session)
 
     def create(self) -> None:
@@ -184,8 +180,6 @@ class PowerOfficeGoDataset(
         last_successful_page = page - 1
 
         try:
-            if self.settings.data_product is None:
-                raise NotSupportedError("Data product must be provided to fetch data.")
             while True:
                 params = self._build_params(page, last_modified_date=last_modified_date)
                 url = self._build_url()
@@ -316,9 +310,6 @@ class PowerOfficeGoDataset(
         Returns:
             dict[str, Any]: A checkpoint dictionary containing the last page information.
         """
-        if self.settings.data_product is None:
-            raise ValueError("Data product must be provided to build checkpoint.")
-
         checkpoint = {
             "last_page": last_page,
             "page_size": self.settings.read.page_size,

@@ -98,15 +98,6 @@ def test_read_error_raises(monkeypatch):
         ds.read()
 
 
-def test_read_missing_data_product():
-    ds = make_dataset(data_product=None)
-    with (
-        patch.object(type(ds.linked_service), "connection", new=property(lambda self: MagicMock())),
-        pytest.raises(NotSupportedError),
-    ):
-        ds.read()
-
-
 def test_checkpoint_resume(monkeypatch):
     responses = [
         DummyResponse([{"id": 3}], headers={"X-Pagination": "{}"}),
@@ -173,12 +164,6 @@ def test_build_checkpoint_success():
     assert cp["incremental"]["last_modified_date"] == "2024-01-01T00:00:00"
 
 
-def test_build_checkpoint_no_data_product():
-    ds = make_dataset(data_product=None)
-    with pytest.raises(ValueError):
-        ds._build_checkpoint(1, "2024-01-01T00:00:00", update_incremental=True)
-
-
 def test_build_params_all_fields():
     ds = make_dataset()
     ds.settings.read.fields = ["id", "name"]
@@ -209,13 +194,6 @@ def test_type_property():
 def test_supports_checkpoint_property():
     ds = make_dataset()
     assert ds.supports_checkpoint is True
-
-
-def test__fetch_data_data_product_none():
-    ds = make_dataset(data_product=None)
-    session = MagicMock()
-    with pytest.raises((NotSupportedError, ValueError)):
-        ds._fetch_data(session)
 
 
 def test__fetch_data_no_pagination_header():
