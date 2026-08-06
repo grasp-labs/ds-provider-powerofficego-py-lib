@@ -170,10 +170,10 @@ class PowerOfficeGoDataset(
         logger.info(f"Fetching data from PowerOfficeGo API for data product: {self.settings.data_product}")
         last_modified_date = None
         if self.checkpoint and "incremental" in self.checkpoint:
-            logger.info(f"Resuming from checkpoint with from_date: {self.checkpoint['incremental']['last_modified_date']}")
-            last_modified_date = self.checkpoint["incremental"]["last_modified_date"]
+            logger.info(f"Resuming from checkpoint with from_date: {self.checkpoint['incremental'].get('value')}")
+            last_modified_date = self.checkpoint["incremental"].get("value")
 
-        page = self.checkpoint.get("last_page", 0) + 1 if self.checkpoint else 1
+        page = self.checkpoint["pagination"].get("value", 0) + 1 if self.checkpoint and "pagination" in self.checkpoint else 1
         logger.info("%s load from page %s", "Resuming incremental" if self.checkpoint else "Starting full", page)
 
         all_records: list[dict[str, Any]] = []
@@ -207,7 +207,7 @@ class PowerOfficeGoDataset(
         except Exception as exc:
             logger.error(f"Error occurred while fetching data: {exc}")
             # On failure, only set last_page (do not update incremental/last_modified_date)
-            self.checkpoint = self._build_checkpoint(last_successful_page, last_modified_date=None, update_incremental=False)
+            self.checkpoint = self._build_checkpoint(last_successful_page, last_modified_date=None)
             raise ReadError(
                 message=f"Error occurred while fetching data: {exc}",
                 details={
@@ -218,7 +218,7 @@ class PowerOfficeGoDataset(
                 },
             ) from exc
 
-        finally:
+        else:
             self.output = pd.DataFrame(all_records)
             # On success, set last_page and last_modified_date
             latest = self.greatest_incremental_value(
@@ -227,9 +227,7 @@ class PowerOfficeGoDataset(
             )
             if latest:
                 last_modified_date = latest
-            self.checkpoint = self._build_checkpoint(
-                last_successful_page, last_modified_date=last_modified_date, update_incremental=True
-            )
+            self.checkpoint = self._build_checkpoint(last_successful_page, last_modified_date=last_modified_date)
 
     @staticmethod
     def _parse_iso8601_timestamp(value: str) -> datetime:
@@ -296,29 +294,22 @@ class PowerOfficeGoDataset(
             details={"kind": kind},
         )
 
-    def _build_checkpoint(self, last_page: int, last_modified_date: str | None, update_incremental: bool = True) -> dict[str, Any]:
+    def _build_checkpoint(self, last_page: int | None, last_modified_date: str | None) -> dict[str, Any]:
         """
         Build a checkpoint dictionary to track the last successfully read page.
 
-        If update_incremental is True, include last_modified_date from read settings.
-        If False, omit the incremental key (used for error/failure checkpointing).
+        Include last_modified_date from read settings.
 
         Args:
-            last_page (int): The last page number that was successfully read.
+            last_page (int | None): The last page number that was successfully read.
             last_modified_date (str | None): The last modified date to include in the checkpoint.
-            update_incremental (bool): Whether to include last_modified_date in checkpoint.
         Returns:
             dict[str, Any]: A checkpoint dictionary containing the last page information.
         """
         checkpoint = {
-            "last_page": last_page,
-            "page_size": self.settings.read.page_size,
-            "data_product": self.settings.data_product,
+            "incremental": {"value": last_modified_date},  # or None
+            "pagination": {"value": last_page},  # or None when scope complete
         }
-        if update_incremental and last_modified_date is not None:
-            checkpoint["incremental"] = {
-                "last_modified_date": last_modified_date,
-            }
         logger.debug(f"Built checkpoint: {checkpoint}")
         return checkpoint
 
