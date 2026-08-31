@@ -1,0 +1,18 @@
+package-name: powerofficego
+name: powerofficego
+description: PowerOfficeGo provider for the DS Business Workflow
+
+
+linked-service:
+  - name: PowerOfficeGo
+    type: ds.resource.linked-service.powerofficego
+    version: 1.0.0
+    description: PowerOfficeGo linked service
+    class_name: ds_provider_powerofficego_py_lib.linked_service.PowerOfficeGoLinkedService
+
+dataset:
+  - name: PowerOfficeGo
+    type: ds.resource.dataset.powerofficego
+    version: 1.0.0
+    description: PowerOfficeGo dataset
+    class_name: ds_provider_powerofficego_py_lib.dataset.powerofficego.PowerOfficeGoDataset
