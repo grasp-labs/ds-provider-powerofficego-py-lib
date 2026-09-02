@@ -24,7 +24,7 @@ Example:
 """
 
 import base64
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Generic, TypeVar
 
 from ds_protocol_http_py_lib import HttpLinkedService, HttpLinkedServiceSettings
@@ -42,13 +42,13 @@ class PowerOfficeGoLinkedServiceSettings(HttpLinkedServiceSettings):
     Attributes:
     """
 
-    application_key: str
+    application_key: str = field(metadata={"mask": True})
     """Application key for PowerOfficeGo API authentication."""
 
-    client_id: str
+    client_id: str = field(metadata={"mask": True})
     """Client ID for PowerOfficeGo API authentication."""
 
-    subscription_key: str
+    subscription_key: str = field(metadata={"mask": True})
     """Subscription key for PowerOfficeGo API authentication."""
 
     headers: dict[str, str] | None = None

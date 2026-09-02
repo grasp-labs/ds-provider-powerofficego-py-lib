@@ -185,6 +185,9 @@ class PowerOfficeGoDataset(
                 url = self._build_url()
                 logger.debug(f"Making API request to {url} with params: {params}")
                 response = session.get(url=url, params=params)
+                if response.status_code == 204:
+                    logger.info("Received 204 No Content from API. Ending pagination.")
+                    break
                 data = response.json()
                 all_records.extend(data)
                 logger.info(f"Fetched page {page} with {len(data)} records.")

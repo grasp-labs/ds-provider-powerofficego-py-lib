@@ -38,6 +38,7 @@ class DummyResponse:
     def __init__(self, data, headers=None):
         self._data = data
         self.headers = headers or {}
+        self.status_code = 200
 
     def json(self):
         return self._data
@@ -205,6 +206,23 @@ def test__fetch_data_no_pagination_header():
         ds.read()
         assert ds.output["id"].iloc[0] == 1
         assert ds.checkpoint["pagination"] == {"value": 1}
+
+
+def test_read_204_no_content_sets_empty_output_and_no_raise():
+    responses = [DummyResponse([], headers={})]
+    responses[0].status_code = 204
+    session = DummySession(responses)
+    ds = make_dataset()
+    ds._build_url = MagicMock(return_value="https://goapi.poweroffice.net/v2/Employees")
+    ds._build_params = MagicMock(side_effect=lambda page, last_modified_date=None: {"PageNumber": page, "PageSize": 5000})
+
+    with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
+        ds.read()
+
+    assert isinstance(ds.output, pd.DataFrame)
+    assert ds.output.empty is True
+    assert ds.checkpoint["pagination"] == {"value": 0}
+    assert ds.checkpoint["incremental"] == {"value": None}
 
 
 def test_parse_iso8601_timestamp_fractional_no_tz():
