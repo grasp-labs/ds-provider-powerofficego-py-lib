@@ -222,8 +222,7 @@ class PowerOfficeGoDataset(
             ) from exc
 
         else:
-            records = pd.json_normalize(all_records, sep="_")
-            self.output = pd.DataFrame(records)
+            self.output = pd.json_normalize(all_records, sep="_")
             # A completed read defines a new incremental boundary, so the next
             # run must restart pagination from the beginning of that boundary.
             latest = self.greatest_incremental_value(
