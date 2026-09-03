@@ -84,7 +84,7 @@ def test_read_successful_fetch(monkeypatch):
         ds.read()
         assert isinstance(ds.output, pd.DataFrame)
         assert set(ds.output["id"]) == {1, 2}
-        assert ds.checkpoint["pagination"] == {"value": 2}
+        assert ds.checkpoint["pagination"] == {"value": 0}
         assert "incremental" in ds.checkpoint
         assert ds.checkpoint["incremental"] == {"value": "2024-01-01T00:00:00"}
 
@@ -111,7 +111,7 @@ def test_checkpoint_resume(monkeypatch):
     with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
         ds.read()
         assert ds.output["id"].iloc[0] == 3
-        assert ds.checkpoint["pagination"] == {"value": 2}
+        assert ds.checkpoint["pagination"] == {"value": 0}
         assert "incremental" in ds.checkpoint
 
 
@@ -164,6 +164,26 @@ def test_build_checkpoint_success():
     assert cp["pagination"] == {"value": 5}
 
 
+def test_successful_read_resets_pagination_for_next_incremental_boundary():
+    responses = [
+        DummyResponse(
+            [{"id": 1, "lastChangedDateTimeOffset": "2024-01-02T00:00:00"}],
+            headers={"X-Pagination": "{}"},
+        )
+    ]
+    session = DummySession(responses)
+    checkpoint = {"pagination": {"value": 1}, "incremental": {"value": "2024-01-01T00:00:00"}}
+    ds = make_dataset(checkpoint=checkpoint)
+    ds._build_url = MagicMock(return_value="https://goapi.poweroffice.net/v2/endpoint")
+    ds._build_params = MagicMock(side_effect=lambda page, last_modified_date=None: {"PageNumber": page, "PageSize": 20000})
+
+    with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
+        ds.read()
+
+    assert ds.checkpoint["pagination"] == {"value": 0}
+    assert ds.checkpoint["incremental"] == {"value": "2024-01-02T00:00:00"}
+
+
 def test_build_params_all_fields():
     ds = make_dataset()
     ds.settings.read.fields = ["id", "name"]
@@ -171,7 +191,7 @@ def test_build_params_all_fields():
     params = ds._build_params(2, "2024-01-01T00:00:00")
     assert params["PageNumber"] == 2
     assert params["lastChangedDateTimeOffsetGreaterThan"] == "2024-01-01T00:00:00"
-    assert params["Fields"] == ["id", "name"]
+    assert params["Fields"] == "id,name"
     assert params["CustomFilter"] == "value"
 
 
@@ -205,7 +225,7 @@ def test__fetch_data_no_pagination_header():
     with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
         ds.read()
         assert ds.output["id"].iloc[0] == 1
-        assert ds.checkpoint["pagination"] == {"value": 1}
+        assert ds.checkpoint["pagination"] == {"value": 0}
 
 
 def test_read_204_no_content_sets_empty_output_and_no_raise():
