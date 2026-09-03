@@ -210,7 +210,7 @@ class PowerOfficeGoDataset(
         except Exception as exc:
             logger.error(f"Error occurred while fetching data: {exc}")
             # On failure, only set last_page (do not update incremental/last_modified_date)
-            self.checkpoint = self._build_checkpoint(last_successful_page, last_modified_date=None)
+            self.checkpoint = self._build_checkpoint(last_successful_page, last_modified_date=last_modified_date)
             raise ReadError(
                 message=f"Error occurred while fetching data: {exc}",
                 details={
@@ -223,14 +223,15 @@ class PowerOfficeGoDataset(
 
         else:
             self.output = pd.DataFrame(all_records)
-            # On success, set last_page and last_modified_date
+            # A completed read defines a new incremental boundary, so the next
+            # run must restart pagination from the beginning of that boundary.
             latest = self.greatest_incremental_value(
                 [record.get("lastChangedDateTimeOffset") for record in all_records if record.get("lastChangedDateTimeOffset")],
                 kind="LastChangedDateTimeOffset",
             )
             if latest:
                 last_modified_date = latest
-            self.checkpoint = self._build_checkpoint(last_successful_page, last_modified_date=last_modified_date)
+            self.checkpoint = self._build_checkpoint(0, last_modified_date=last_modified_date)
 
     @staticmethod
     def _parse_iso8601_timestamp(value: str) -> datetime:
@@ -330,10 +331,11 @@ class PowerOfficeGoDataset(
             "PageNumber": page,
             "PageSize": self.settings.read.page_size,
         }
+        fields = ",".join(self.settings.read.fields) if self.settings.read.fields else None
         if last_modified_date:
             params["lastChangedDateTimeOffsetGreaterThan"] = last_modified_date
-        if self.settings.read.fields:
-            params["Fields"] = self.settings.read.fields
+        if fields:
+            params["Fields"] = fields
         if self.settings.read.filters:
             params.update(self.settings.read.filters)
         return params
