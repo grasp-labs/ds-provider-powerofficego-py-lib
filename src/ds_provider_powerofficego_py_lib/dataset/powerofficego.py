@@ -189,6 +189,12 @@ class PowerOfficeGoDataset(
                     logger.info("Received 204 No Content from API. Ending pagination.")
                     break
                 data = response.json()
+
+                # If LastChangedDateTimeOffset is not requested in the fields, remove it from each record.
+                if self.settings.read.fields and "LastChangedDateTimeOffset" not in self.settings.read.fields:
+                    for record in data:
+                        record.pop("LastChangedDateTimeOffset", None)
+
                 all_records.extend(data)
                 logger.info(f"Fetched page {page} with {len(data)} records.")
 
@@ -226,7 +232,7 @@ class PowerOfficeGoDataset(
             # A completed read defines a new incremental boundary, so the next
             # run must restart pagination from the beginning of that boundary.
             latest = self.greatest_incremental_value(
-                [record.get("lastChangedDateTimeOffset") for record in all_records if record.get("lastChangedDateTimeOffset")],
+                [record.get("LastChangedDateTimeOffset") for record in all_records if record.get("LastChangedDateTimeOffset")],
                 kind="LastChangedDateTimeOffset",
             )
             if latest:
@@ -331,7 +337,13 @@ class PowerOfficeGoDataset(
             "PageNumber": page,
             "PageSize": self.settings.read.page_size,
         }
-        fields = ",".join(self.settings.read.fields) if self.settings.read.fields else None
+        if self.settings.read.fields:
+            fields = ",".join(self.settings.read.fields)
+            if "LastChangedDateTimeOffset" not in self.settings.read.fields:
+                fields += ",LastChangedDateTimeOffset"
+        else:
+            fields = None
+
         if last_modified_date:
             params["lastChangedDateTimeOffsetGreaterThan"] = last_modified_date
         if fields:
