@@ -190,11 +190,6 @@ class PowerOfficeGoDataset(
                     break
                 data = response.json()
 
-                # If LastChangedDateTimeOffset is not requested in the fields, remove it from each record.
-                if self.settings.read.fields and "LastChangedDateTimeOffset" not in self.settings.read.fields:
-                    for record in data:
-                        record.pop("LastChangedDateTimeOffset", None)
-
                 all_records.extend(data)
                 logger.info(f"Fetched page {page} with {len(data)} records.")
 
@@ -228,7 +223,6 @@ class PowerOfficeGoDataset(
             ) from exc
 
         else:
-            self.output = pd.json_normalize(all_records, sep="_")
             # A completed read defines a new incremental boundary, so the next
             # run must restart pagination from the beginning of that boundary.
             latest = self.greatest_incremental_value(
@@ -238,6 +232,13 @@ class PowerOfficeGoDataset(
             if latest:
                 last_modified_date = latest
             self.checkpoint = self._build_checkpoint(0, last_modified_date=last_modified_date)
+
+            # Remove LastChangedDateTimeOffset from records if it's not requested in the fields.
+            if self.settings.read.fields and "LastChangedDateTimeOffset" not in self.settings.read.fields:
+                for record in all_records:
+                    record.pop("LastChangedDateTimeOffset", None)
+
+            self.output = pd.json_normalize(all_records, sep="_")
 
     @staticmethod
     def _parse_iso8601_timestamp(value: str) -> datetime:
