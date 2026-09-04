@@ -189,6 +189,7 @@ class PowerOfficeGoDataset(
                     logger.info("Received 204 No Content from API. Ending pagination.")
                     break
                 data = response.json()
+
                 all_records.extend(data)
                 logger.info(f"Fetched page {page} with {len(data)} records.")
 
@@ -222,15 +223,22 @@ class PowerOfficeGoDataset(
             ) from exc
 
         else:
-            self.output = pd.json_normalize(all_records, sep="_")
             # A completed read defines a new incremental boundary, so the next
             # run must restart pagination from the beginning of that boundary.
             latest = self.greatest_incremental_value(
-                [record.get("lastChangedDateTimeOffset") for record in all_records if record.get("lastChangedDateTimeOffset")],
+                [record.get("LastChangedDateTimeOffset") for record in all_records if record.get("LastChangedDateTimeOffset")],
                 kind="LastChangedDateTimeOffset",
             )
             if latest:
                 last_modified_date = latest
+
+            self.output = pd.json_normalize(all_records, sep="_")
+
+            # Remove LastChangedDateTimeOffset if it was only fetched for checkpointing.
+            if self.settings.read.fields and "LastChangedDateTimeOffset" not in self.settings.read.fields:
+                self.output = self.output.drop(columns="LastChangedDateTimeOffset", errors="ignore")
+
+            # Only advance the checkpoint after the output has been built successfully.
             self.checkpoint = self._build_checkpoint(0, last_modified_date=last_modified_date)
 
     @staticmethod
@@ -331,7 +339,13 @@ class PowerOfficeGoDataset(
             "PageNumber": page,
             "PageSize": self.settings.read.page_size,
         }
-        fields = ",".join(self.settings.read.fields) if self.settings.read.fields else None
+        if self.settings.read.fields:
+            fields = ",".join(self.settings.read.fields)
+            if "LastChangedDateTimeOffset" not in self.settings.read.fields:
+                fields += ",LastChangedDateTimeOffset"
+        else:
+            fields = None
+
         if last_modified_date:
             params["lastChangedDateTimeOffsetGreaterThan"] = last_modified_date
         if fields:

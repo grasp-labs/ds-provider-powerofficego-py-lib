@@ -72,9 +72,9 @@ def test_read_successful_fetch(monkeypatch):
     # Simulate two pages, then end
     responses = [
         DummyResponse(
-            [{"id": 1, "lastChangedDateTimeOffset": "2024-01-01T00:00:00"}], headers={"X-Pagination": '{"nextPageLink": "exists"}'}
+            [{"Id": 1, "LastChangedDateTimeOffset": "2024-01-01T00:00:00"}], headers={"X-Pagination": '{"nextPageLink": "exists"}'}
         ),
-        DummyResponse([{"id": 2, "lastChangedDateTimeOffset": "2024-01-01T00:00:00"}], headers={"X-Pagination": "{}"}),
+        DummyResponse([{"Id": 2, "LastChangedDateTimeOffset": "2024-01-01T00:00:00"}], headers={"X-Pagination": "{}"}),
     ]
     session = DummySession(responses)
     ds = make_dataset()
@@ -83,10 +83,32 @@ def test_read_successful_fetch(monkeypatch):
     with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
         ds.read()
         assert isinstance(ds.output, pd.DataFrame)
-        assert set(ds.output["id"]) == {1, 2}
+        assert set(ds.output["Id"]) == {1, 2}
         assert ds.checkpoint["pagination"] == {"value": 0}
         assert "incremental" in ds.checkpoint
         assert ds.checkpoint["incremental"] == {"value": "2024-01-01T00:00:00"}
+
+
+def test_read_excludes_incremental_field_when_not_requested():
+    responses = [
+        DummyResponse(
+            [{"Id": 1, "LastChangedDateTimeOffset": "2024-01-01T00:00:00"}],
+            headers={"X-Pagination": "{}"},
+        )
+    ]
+    session = DummySession(responses)
+    ds = make_dataset()
+    ds.settings.read.fields = ["Id"]
+    ds._build_url = MagicMock(return_value="https://goapi.poweroffice.net/v2/endpoint")
+    ds._build_params = MagicMock(return_value={"PageNumber": 1, "PageSize": 20000})
+
+    with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
+        ds.read()
+
+    assert list(ds.output.columns) == ["Id"]
+    assert ds.output["Id"].tolist() == [1]
+    assert ds.checkpoint["pagination"] == {"value": 0}
+    assert ds.checkpoint["incremental"] == {"value": "2024-01-01T00:00:00"}
 
 
 def test_read_error_raises(monkeypatch):
@@ -101,7 +123,7 @@ def test_read_error_raises(monkeypatch):
 
 def test_checkpoint_resume(monkeypatch):
     responses = [
-        DummyResponse([{"id": 3}], headers={"X-Pagination": "{}"}),
+        DummyResponse([{"Id": 3}], headers={"X-Pagination": "{}"}),
     ]
     session = DummySession(responses)
     checkpoint = {"pagination": {"value": 1}, "incremental": {"value": "2024-01-01T00:00:00"}}
@@ -110,7 +132,7 @@ def test_checkpoint_resume(monkeypatch):
     ds._build_params = MagicMock(side_effect=lambda page, last_modified_date=None: {"PageNumber": page, "PageSize": 20000})
     with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
         ds.read()
-        assert ds.output["id"].iloc[0] == 3
+        assert ds.output["Id"].iloc[0] == 3
         assert ds.checkpoint["pagination"] == {"value": 0}
         assert "incremental" in ds.checkpoint
 
@@ -167,7 +189,7 @@ def test_build_checkpoint_success():
 def test_successful_read_resets_pagination_for_next_incremental_boundary():
     responses = [
         DummyResponse(
-            [{"id": 1, "lastChangedDateTimeOffset": "2024-01-02T00:00:00"}],
+            [{"Id": 1, "LastChangedDateTimeOffset": "2024-01-02T00:00:00"}],
             headers={"X-Pagination": "{}"},
         )
     ]
@@ -186,12 +208,12 @@ def test_successful_read_resets_pagination_for_next_incremental_boundary():
 
 def test_build_params_all_fields():
     ds = make_dataset()
-    ds.settings.read.fields = ["id", "name"]
+    ds.settings.read.fields = ["Id", "Name"]
     ds.settings.read.filters = {"CustomFilter": "value"}
     params = ds._build_params(2, "2024-01-01T00:00:00")
     assert params["PageNumber"] == 2
     assert params["lastChangedDateTimeOffsetGreaterThan"] == "2024-01-01T00:00:00"
-    assert params["Fields"] == "id,name"
+    assert params["Fields"] == "Id,Name,LastChangedDateTimeOffset"
     assert params["CustomFilter"] == "value"
 
 
@@ -217,14 +239,14 @@ def test_supports_checkpoint_property():
 
 
 def test__fetch_data_no_pagination_header():
-    responses = [DummyResponse([{"id": 1, "lastChangedDateTimeOffset": "2024-01-01T00:00:00"}], headers={})]
+    responses = [DummyResponse([{"Id": 1, "LastChangedDateTimeOffset": "2024-01-01T00:00:00"}], headers={})]
     session = DummySession(responses)
     ds = make_dataset()
     ds._build_url = MagicMock(return_value="https://goapi.poweroffice.net/v2/endpoint")
     ds._build_params = MagicMock(side_effect=lambda page, last_modified_date=None: {"PageNumber": page, "PageSize": 20000})
     with patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)):
         ds.read()
-        assert ds.output["id"].iloc[0] == 1
+        assert ds.output["Id"].iloc[0] == 1
         assert ds.checkpoint["pagination"] == {"value": 0}
 
 
