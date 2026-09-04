@@ -107,6 +107,8 @@ def test_read_excludes_incremental_field_when_not_requested():
 
     assert list(ds.output.columns) == ["Id"]
     assert ds.output["Id"].tolist() == [1]
+    assert ds.checkpoint["pagination"] == {"value": 0}
+    assert ds.checkpoint["incremental"] == {"value": "2024-01-01T00:00:00"}
 
 
 def test_read_error_raises(monkeypatch):

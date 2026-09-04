@@ -231,13 +231,15 @@ class PowerOfficeGoDataset(
             )
             if latest:
                 last_modified_date = latest
-            self.checkpoint = self._build_checkpoint(0, last_modified_date=last_modified_date)
 
             self.output = pd.json_normalize(all_records, sep="_")
 
             # Remove LastChangedDateTimeOffset if it was only fetched for checkpointing.
             if self.settings.read.fields and "LastChangedDateTimeOffset" not in self.settings.read.fields:
                 self.output = self.output.drop(columns="LastChangedDateTimeOffset", errors="ignore")
+
+            # Only advance the checkpoint after the output has been built successfully.
+            self.checkpoint = self._build_checkpoint(0, last_modified_date=last_modified_date)
 
     @staticmethod
     def _parse_iso8601_timestamp(value: str) -> datetime:
