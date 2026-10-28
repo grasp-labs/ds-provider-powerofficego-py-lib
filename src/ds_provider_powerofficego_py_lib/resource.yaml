@@ -3,7 +3,7 @@ name: powerofficego
 description: PowerOfficeGo provider for the DS Business Workflow
 
 
-linked-service:
+linked_service:
   - name: PowerOfficeGo
     type: ds.resource.linked-service.powerofficego
     version: 1.0.0
