@@ -31,7 +31,6 @@ def test_settings_headers_and_basic_default_and_post_init():
     expected_auth = base64.b64encode(b"appkey:clientid").decode("utf-8")
     assert settings.headers == {
         "Authorization": f"Basic {expected_auth}",
-        "Content-Type": "application/x-www-form-urlencoded",
         "Ocp-Apim-Subscription-Key": "subkey",
     }
     assert settings.oauth2 is not None

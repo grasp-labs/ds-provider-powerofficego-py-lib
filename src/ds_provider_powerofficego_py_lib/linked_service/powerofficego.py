@@ -113,7 +113,6 @@ class PowerOfficeGoLinkedService(
         if self.settings.headers is None:
             self.settings.headers = {
                 "Authorization": f"Basic {base64_encoded_credentials}",
-                "Content-Type": "application/x-www-form-urlencoded",
                 "Ocp-Apim-Subscription-Key": self.settings.subscription_key,
             }
         if self.settings.auth_type == AuthType.OAUTH2 and self.settings.oauth2 is None:
