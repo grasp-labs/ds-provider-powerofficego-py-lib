@@ -10,6 +10,7 @@ This example demonstrates:
 - Reading customer data from PowerOfficeGo.
 - Handle pagination when reading data.
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,13 +21,9 @@ from ds_common_logger_py_lib import Logger
 
 from ds_provider_powerofficego_py_lib.linked_service.powerofficego import (
     PowerOfficeGoLinkedService,
-    PowerOfficeGoLinkedServiceSettings
+    PowerOfficeGoLinkedServiceSettings,
 )
-from ds_provider_powerofficego_py_lib.dataset.powerofficego import (
-    ReadSettings,
-    PowerOfficeGoDataset,
-    PowerOfficeGoDatasetSettings
-)
+from ds_provider_powerofficego_py_lib.dataset.powerofficego import ReadSettings, PowerOfficeGoDataset, PowerOfficeGoDatasetSettings
 
 Logger.configure(level=logging.DEBUG)
 logger = Logger.get_logger(__name__)
@@ -50,7 +47,7 @@ def main() -> None:
         data_product="Customers",
         read=ReadSettings(
             page_size=100,
-        )
+        ),
     )
     dataset = PowerOfficeGoDataset(
         id=uuid4(),

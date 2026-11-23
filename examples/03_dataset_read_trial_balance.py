@@ -40,13 +40,9 @@ def main() -> None:
         name="pogo-linked-service",
         version="v1.0.0",
         settings=PowerOfficeGoLinkedServiceSettings(
-            application_key=os.environ["POGO_APPLICATION_KEY"],
-            client_id=os.environ["POGO_CLIENT_ID"],
-            subscription_key=os.environ["POGO_SUBSCRIPTION_KEY"],
-            host=os.getenv("POGO_HOST", "https://goapi.poweroffice.net/"),
-            token_endpoint=os.getenv(
-                "POGO_TOKEN_ENDPOINT", "https://goapi.poweroffice.net/OAuth/Token"
-            ),
+            application_key=os.environ["POWEROFFICEGO_APPLICATION_KEY"],
+            client_id=os.environ["POWEROFFICEGO_CLIENT_ID"],
+            subscription_key=os.environ["POWEROFFICEGO_SUBSCRIPTION_KEY"],
         ),
     )
 
