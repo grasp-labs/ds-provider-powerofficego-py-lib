@@ -48,21 +48,8 @@ def reject_if_misused(*, data_product: str, filters: dict[str, Any] | None) -> N
             )
 
 
-def _parse_iso_filter(
-    filters: dict[str, Any] | None,
-    key: TrialBalanceFilter,
-    *,
-    data_product: str,
-    required: bool,
-) -> date | None:
-    raw = (filters or {}).get(key)
-    if raw is None:
-        if required:
-            raise ReadError(
-                message=f"filters.{key} is required for {DataProduct.TRIAL_BALANCE} history reads.",
-                details={"data_product": data_product},
-            )
-        return None
+def _parse_iso_date(raw: Any, key: TrialBalanceFilter, *, data_product: str) -> date:
+    """Parse a non-empty filter value as an ISO date (``YYYY-MM-DD``)."""
     if not isinstance(raw, str):
         raise ReadError(
             message=f"filters.{key} must be an ISO date string (YYYY-MM-DD), got: {raw!r}",
@@ -78,16 +65,22 @@ def _parse_iso_filter(
 
 
 def resolve_date_from(filters: dict[str, Any] | None, *, data_product: str) -> date:
-    """Parse ``filters.date_from`` as an ISO date (``YYYY-MM-DD``)."""
-    resolved = _parse_iso_filter(filters, TrialBalanceFilter.DATE_FROM, data_product=data_product, required=True)
-    assert resolved is not None
-    return resolved
+    """Parse ``filters.date_from`` as an ISO date (``YYYY-MM-DD``); required for history reads."""
+    raw = (filters or {}).get(TrialBalanceFilter.DATE_FROM)
+    if raw is None:
+        raise ReadError(
+            message=f"filters.{TrialBalanceFilter.DATE_FROM} is required for {DataProduct.TRIAL_BALANCE} history reads.",
+            details={"data_product": data_product},
+        )
+    return _parse_iso_date(raw, TrialBalanceFilter.DATE_FROM, data_product=data_product)
 
 
 def resolve_date_to(filters: dict[str, Any] | None, *, data_product: str, default: date) -> date:
     """Parse optional ``filters.date_to``; default to ``default`` (typically today)."""
-    resolved = _parse_iso_filter(filters, TrialBalanceFilter.DATE_TO, data_product=data_product, required=False)
-    return resolved if resolved is not None else default
+    raw = (filters or {}).get(TrialBalanceFilter.DATE_TO)
+    if raw is None:
+        return default
+    return _parse_iso_date(raw, TrialBalanceFilter.DATE_TO, data_product=data_product)
 
 
 def month_end_as_of_dates(*, date_from: date, date_to: date) -> Iterator[date]:
@@ -98,9 +91,7 @@ def month_end_as_of_dates(*, date_from: date, date_to: date) -> Iterator[date]:
     while cursor <= date_to:
         next_month = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
         month_end = next_month - timedelta(days=1)
-        as_of = min(month_end, date_to)
-        if as_of >= date_from:
-            yield as_of
+        yield min(month_end, date_to)
         cursor = next_month
 
 

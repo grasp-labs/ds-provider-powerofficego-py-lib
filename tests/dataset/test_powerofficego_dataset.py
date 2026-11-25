@@ -500,3 +500,135 @@ def test_build_params_trial_balance_does_not_append_last_changed():
     params = utils.build_params(ds.settings, 1, None, as_of="2025-01-31")
     assert params["Fields"] == "AccountNo,AccountName,Balance"
     assert "LastChangedDateTimeOffset" not in params["Fields"]
+
+
+def make_trial_balance_dataset(filters):
+    settings = PowerOfficeGoDatasetSettings(
+        data_product=DataProduct.TRIAL_BALANCE,
+        read=ReadSettings(filters=filters),
+    )
+    return PowerOfficeGoDataset(
+        id="34567890-1234-5678-1234-1234567890ab",
+        name="pogo-dataset",
+        version="v1.0.0",
+        linked_service=make_linked_service(),
+        settings=settings,
+    )
+
+
+def test_reject_if_misused_ignores_unrelated_filters():
+    trial_balance.reject_if_misused(data_product="Customers", filters={"CustomFilter": "value"})
+
+
+def test_resolve_date_from_is_required():
+    with pytest.raises(ReadError):
+        trial_balance.resolve_date_from({}, data_product=DataProduct.TRIAL_BALANCE)
+
+
+def test_resolve_date_from_rejects_non_string():
+    with pytest.raises(ReadError):
+        trial_balance.resolve_date_from({TrialBalanceFilter.DATE_FROM: 20250101}, data_product=DataProduct.TRIAL_BALANCE)
+
+
+def test_month_end_as_of_dates_empty_when_from_is_after_to():
+    assert list(trial_balance.month_end_as_of_dates(date_from=date(2024, 3, 1), date_to=date(2024, 1, 1))) == []
+
+
+def test_trial_balance_history_rejects_inverted_date_range():
+    ds = make_trial_balance_dataset(
+        {TrialBalanceFilter.DATE_FROM: "2025-12-31", TrialBalanceFilter.DATE_TO: "2025-01-01"},
+    )
+    with (
+        patch.object(type(ds.linked_service), "connection", new=property(lambda self: MagicMock())),
+        pytest.raises(ReadError),
+    ):
+        ds.read()
+
+
+def test_trial_balance_history_skips_as_of_date_on_204():
+    no_content = DummyResponse([], headers={})
+    no_content.status_code = 204
+    session = DummySession([no_content, DummyResponse([{"accountNo": 1000, "balance": 2.0}], headers={})])
+    ds = make_trial_balance_dataset(
+        {TrialBalanceFilter.DATE_FROM: "2024-01-01", TrialBalanceFilter.DATE_TO: "2024-02-29"},
+    )
+    with (
+        patch(TB_BUILD_URL, return_value="https://goapi.poweroffice.net/v2/TrialBalance"),
+        patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)),
+    ):
+        ds.read()
+    assert [call[1]["date"] for call in session.calls] == ["2024-01-31", "2024-02-29"]
+    assert list(ds.output["date"]) == ["2024-02-29"]
+
+
+def test_trial_balance_history_follows_pagination():
+    session = DummySession(
+        [
+            DummyResponse([{"accountNo": 1000, "balance": 1.0}], headers={"X-Pagination": '{"nextPageLink": "next"}'}),
+            DummyResponse([{"accountNo": 2000, "balance": 2.0}], headers={"X-Pagination": "{}"}),
+        ]
+    )
+    ds = make_trial_balance_dataset(
+        {TrialBalanceFilter.DATE_FROM: "2024-01-01", TrialBalanceFilter.DATE_TO: "2024-01-31"},
+    )
+    with (
+        patch(TB_BUILD_URL, return_value="https://goapi.poweroffice.net/v2/TrialBalance"),
+        patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)),
+    ):
+        ds.read()
+    assert [call[1]["PageNumber"] for call in session.calls] == [1, 2]
+    assert list(ds.output["accountNo"]) == [1000, 2000]
+    assert ds.checkpoint["pagination"] == {"value": 2}
+
+
+def test_trial_balance_history_wraps_unexpected_errors():
+    session = MagicMock()
+    session.get.side_effect = RuntimeError("boom")
+    ds = make_trial_balance_dataset(
+        {TrialBalanceFilter.DATE_FROM: "2024-01-01", TrialBalanceFilter.DATE_TO: "2024-01-31"},
+    )
+    with (
+        patch(TB_BUILD_URL, return_value="https://goapi.poweroffice.net/v2/TrialBalance"),
+        patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)),
+        pytest.raises(ReadError),
+    ):
+        ds.read()
+    assert ds.checkpoint["pagination"] == {"value": 0}
+    assert ds.checkpoint["incremental"] == {"value": None}
+
+
+def test_trial_balance_history_reraises_read_errors_unchanged():
+    original = ReadError(message="upstream", details={})
+    session = MagicMock()
+    session.get.side_effect = original
+    ds = make_trial_balance_dataset(
+        {TrialBalanceFilter.DATE_FROM: "2024-01-01", TrialBalanceFilter.DATE_TO: "2024-01-31"},
+    )
+    with (
+        patch(TB_BUILD_URL, return_value="https://goapi.poweroffice.net/v2/TrialBalance"),
+        patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)),
+        pytest.raises(ReadError) as exc_info,
+    ):
+        ds.read()
+    assert exc_info.value is original
+    assert not ds.checkpoint
+
+
+def test_records_from_body_list_keeps_only_dict_rows():
+    assert utils.records_from_body([{"Id": 1}, "junk", 2, {"Id": 3}]) == [{"Id": 1}, {"Id": 3}]
+
+
+@pytest.mark.parametrize("key", ["data", "value", "values"])
+def test_records_from_body_unwraps_nested_list(key):
+    assert utils.records_from_body({key: [{"Id": 1}, "junk"]}) == [{"Id": 1}]
+
+
+@pytest.mark.parametrize("body", [{"data": "not-a-list"}, {"other": [{"Id": 1}]}, "text", 5, None])
+def test_records_from_body_returns_empty_for_unknown_shapes(body):
+    assert utils.records_from_body(body) == []
+
+
+def test_parse_iso8601_timestamp_short_fraction_is_kept():
+    dt = utils.parse_iso8601_timestamp("2024-05-13T12:34:56.123Z")
+    assert dt.microsecond == 123000
+    assert dt.tzinfo == timezone.utc
