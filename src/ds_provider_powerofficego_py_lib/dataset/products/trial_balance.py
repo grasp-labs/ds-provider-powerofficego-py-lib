@@ -32,8 +32,13 @@ logger = Logger.get_logger(__name__, package=True)
 
 
 def handles(*, data_product: str, filters: dict[str, Any] | None) -> bool:
-    """True when this product should run the month-end history fetch."""
-    return data_product == DataProduct.TRIAL_BALANCE and bool(filters and filters.get(TrialBalanceFilter.DATE_FROM))
+    """True when this product should run the month-end history fetch.
+
+    Any history key that is set (even an empty ``date_from`` or ``date_to`` on its own) selects the
+    history path, so bad input fails in ``resolve_date_*`` instead of the keys being silently
+    stripped and a single date-less balance being requested.
+    """
+    return data_product == DataProduct.TRIAL_BALANCE and any((filters or {}).get(key) is not None for key in TrialBalanceFilter)
 
 
 def reject_if_misused(*, data_product: str, filters: dict[str, Any] | None) -> None:
@@ -96,7 +101,15 @@ def month_end_as_of_dates(*, date_from: date, date_to: date) -> Iterator[date]:
 
 
 def fetch_history(dataset: PowerOfficeGoDataset[Any, Any], session: Any) -> None:
-    """Fetch TrialBalance once per month-end as-of date; stamp each row with ``date``."""
+    """Fetch TrialBalance once per month-end as-of date; stamp each row with ``date``.
+
+    The PowerOffice response has no date column, so ``date`` is the requested as-of date.
+
+    A history read always restarts from the first as-of date and never resumes from
+    ``dataset.checkpoint``. Because of that, the checkpoint is always left in the "start from
+    page 1" state (``pagination: 0``), on success and on failure. Persisting a mid-run page
+    would make the next normal read of the same dataset resume after a page it never fetched.
+    """
     today = datetime.now(tz=timezone.utc).date()
     filters = dataset.settings.read.filters
     data_product = dataset.settings.data_product
@@ -135,6 +148,7 @@ def fetch_history(dataset: PowerOfficeGoDataset[Any, Any], session: Any) -> None
         for as_of in as_of_dates:
             current_as_of = as_of.isoformat()
             page = 1
+            last_successful_page = 0  # per as-of date, so error details match ``as_of``
             while True:
                 params = build_params(dataset.settings, page, last_modified_date=None, as_of=current_as_of)
                 logger.debug("Making API request to %s with params: %s", url, params)
@@ -167,7 +181,8 @@ def fetch_history(dataset: PowerOfficeGoDataset[Any, Any], session: Any) -> None
         raise
     except Exception as exc:
         logger.error("Error occurred while fetching TrialBalance history: %s", exc)
-        dataset.checkpoint = build_checkpoint(last_successful_page, last_modified_date=None)
+        # Not resumable (see docstring): the failing page is reported in ``details`` only.
+        dataset.checkpoint = build_checkpoint(0, last_modified_date=None)
         raise ReadError(
             message=f"Error occurred while fetching TrialBalance history: {exc}",
             details={
@@ -180,4 +195,5 @@ def fetch_history(dataset: PowerOfficeGoDataset[Any, Any], session: Any) -> None
         ) from exc
 
     dataset.output = pd.DataFrame(all_records)
-    dataset.checkpoint = build_checkpoint(last_successful_page, last_modified_date=None)
+    # A finished read means "start from page 1 next time", same as a finished normal read.
+    dataset.checkpoint = build_checkpoint(0, last_modified_date=None)

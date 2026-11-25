@@ -578,7 +578,9 @@ def test_trial_balance_history_follows_pagination():
         ds.read()
     assert [call[1]["PageNumber"] for call in session.calls] == [1, 2]
     assert list(ds.output["accountNo"]) == [1000, 2000]
-    assert ds.checkpoint["pagination"] == {"value": 2}
+    # A finished read means "start from page 1 next time", even when it walked several pages.
+    assert ds.checkpoint["pagination"] == {"value": 0}
+    assert ds.checkpoint["incremental"] == {"value": None}
 
 
 def test_trial_balance_history_wraps_unexpected_errors():
@@ -632,3 +634,84 @@ def test_parse_iso8601_timestamp_short_fraction_is_kept():
     dt = utils.parse_iso8601_timestamp("2024-05-13T12:34:56.123Z")
     assert dt.microsecond == 123000
     assert dt.tzinfo == timezone.utc
+
+
+def test_trial_balance_handles_any_history_key_even_if_incomplete():
+    product = DataProduct.TRIAL_BALANCE
+    assert trial_balance.handles(data_product=product, filters={TrialBalanceFilter.DATE_FROM: "2025-01-01"})
+    assert trial_balance.handles(data_product=product, filters={TrialBalanceFilter.DATE_TO: "2025-12-31"})
+    assert trial_balance.handles(data_product=product, filters={TrialBalanceFilter.DATE_FROM: ""})
+
+
+def test_trial_balance_does_not_handle_plain_reads():
+    product = DataProduct.TRIAL_BALANCE
+    assert not trial_balance.handles(data_product=product, filters=None)
+    assert not trial_balance.handles(data_product=product, filters={})
+    assert not trial_balance.handles(data_product=product, filters={"date": "2025-12-31"})
+    assert not trial_balance.handles(data_product="Customers", filters={TrialBalanceFilter.DATE_FROM: "2025-01-01"})
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [{TrialBalanceFilter.DATE_TO: "2025-12-31"}, {TrialBalanceFilter.DATE_FROM: ""}],
+)
+def test_trial_balance_incomplete_history_filters_fail_instead_of_dropping_keys(filters):
+    session = MagicMock()
+    ds = make_trial_balance_dataset(filters)
+    with (
+        patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)),
+        pytest.raises(ReadError),
+    ):
+        ds.read()
+    session.get.assert_not_called()
+
+
+def test_trial_balance_history_failure_reports_current_as_of_and_does_not_persist_page():
+    session = MagicMock()
+    session.get.side_effect = [
+        DummyResponse([{"AccountNo": 1000}], headers={"X-Pagination": '{"nextPageLink": "next"}'}),
+        DummyResponse([{"AccountNo": 2000}], headers={"X-Pagination": "{}"}),
+        RuntimeError("boom"),
+    ]
+    ds = make_trial_balance_dataset(
+        {TrialBalanceFilter.DATE_FROM: "2024-01-01", TrialBalanceFilter.DATE_TO: "2024-02-29"},
+    )
+    with (
+        patch(TB_BUILD_URL, return_value="https://goapi.poweroffice.net/v2/TrialBalance"),
+        patch.object(type(ds.linked_service), "connection", new=property(lambda self: session)),
+        pytest.raises(ReadError) as exc_info,
+    ):
+        ds.read()
+    # January had two pages; the failure is on February page 1, so nothing carries over from January.
+    assert exc_info.value.details["as_of"] == "2024-02-29"
+    assert exc_info.value.details["failed_page"] == 1
+    assert exc_info.value.details["last_successful_page"] == 0
+    assert ds.checkpoint["pagination"] == {"value": 0}
+
+
+def test_normal_read_after_history_read_starts_from_page_one():
+    history_session = DummySession(
+        [
+            DummyResponse([{"AccountNo": 1000}], headers={"X-Pagination": '{"nextPageLink": "next"}'}),
+            DummyResponse([{"AccountNo": 2000}], headers={"X-Pagination": "{}"}),
+        ]
+    )
+    ds = make_trial_balance_dataset(
+        {TrialBalanceFilter.DATE_FROM: "2024-01-01", TrialBalanceFilter.DATE_TO: "2024-01-31"},
+    )
+    with (
+        patch(TB_BUILD_URL, return_value="https://goapi.poweroffice.net/v2/TrialBalance"),
+        patch.object(type(ds.linked_service), "connection", new=property(lambda self: history_session)),
+    ):
+        ds.read()
+
+    # Same dataset, same checkpoint, now a plain point-in-time read.
+    ds.settings.read.filters = {"date": "2024-01-31"}
+    normal_session = DummySession([DummyResponse([{"AccountNo": 1000}], headers={})])
+    with (
+        patch(BUILD_URL, return_value="https://goapi.poweroffice.net/v2/TrialBalance"),
+        patch.object(type(ds.linked_service), "connection", new=property(lambda self: normal_session)),
+    ):
+        ds.read()
+    assert normal_session.calls[0][1]["PageNumber"] == 1
+    assert list(ds.output["AccountNo"]) == [1000]
