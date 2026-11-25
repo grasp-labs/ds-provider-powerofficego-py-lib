@@ -10,7 +10,8 @@ It includes the necessary settings for authentication and
 connection to the PowerOfficeGo API.
 
 Prerequisites:
-    Set environment variables for PowerOfficeGo API authentication:
+    Set environment variables (or put them in a ``.env`` file, see ``.env.example``)
+    for PowerOfficeGo API authentication:
     - `POGO_APPLICATION_KEY`: Your PowerOfficeGo application key.
     - `POGO_CLIENT_ID`: Your PowerOfficeGo client ID.
     - `POGO_SUBSCRIPTION_KEY`: Your PowerOfficeGo subscription key.
@@ -22,8 +23,11 @@ import os
 import logging
 from uuid import uuid4
 
+from dotenv import load_dotenv
 from ds_common_logger_py_lib import Logger
 from ds_provider_powerofficego_py_lib.linked_service import PowerOfficeGoLinkedService, PowerOfficeGoLinkedServiceSettings
+
+load_dotenv()
 
 Logger.configure(level=logging.DEBUG)
 logger = Logger.get_logger(__name__)
@@ -31,9 +35,9 @@ logger = Logger.get_logger(__name__)
 
 def main() -> None:
     # Load settings from environment variables
-    application_key = os.getenv("POGO_APPLICATION_KEY", "your-application-key")
-    client_id = os.getenv("POGO_CLIENT_ID", "your-client-id")
-    subscription_key = os.getenv("POGO_SUBSCRIPTION_KEY", "your-subscription-key")
+    application_key = os.getenv("POWEROFFICEGO_APPLICATION_KEY", "your-application-key")
+    client_id = os.getenv("POWEROFFICEGO_CLIENT_ID", "your-client-id")
+    subscription_key = os.getenv("POWEROFFICEGO_SUBSCRIPTION_KEY", "your-subscription-key")
 
     # Create linked service settings
     settings = PowerOfficeGoLinkedServiceSettings(

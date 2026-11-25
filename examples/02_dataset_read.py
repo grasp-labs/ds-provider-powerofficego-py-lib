@@ -17,6 +17,7 @@ import logging
 import os
 from uuid import uuid4
 
+from dotenv import load_dotenv
 from ds_common_logger_py_lib import Logger
 
 from ds_provider_powerofficego_py_lib.linked_service.powerofficego import (
@@ -24,6 +25,8 @@ from ds_provider_powerofficego_py_lib.linked_service.powerofficego import (
     PowerOfficeGoLinkedServiceSettings,
 )
 from ds_provider_powerofficego_py_lib.dataset.powerofficego import ReadSettings, PowerOfficeGoDataset, PowerOfficeGoDatasetSettings
+
+load_dotenv()
 
 Logger.configure(level=logging.DEBUG)
 logger = Logger.get_logger(__name__)
