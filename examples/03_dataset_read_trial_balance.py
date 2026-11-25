@@ -5,7 +5,7 @@
 Example 03: Dataset + TrialBalance dataset read.
 
 Usage:
-    uv run python examples/03_datasedt_read_trial_balance.py
+    uv run python examples/03_dataset_read_trial_balance.py
 """
 
 from __future__ import annotations

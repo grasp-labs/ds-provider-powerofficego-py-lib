@@ -9,6 +9,9 @@ This example demonstrates:
 - Creating a Dataset for a data product.
 - Reading customer data from PowerOfficeGo.
 - Handle pagination when reading data.
+
+Usage:
+    uv run python examples/02_dataset_read.py
 """
 
 from __future__ import annotations

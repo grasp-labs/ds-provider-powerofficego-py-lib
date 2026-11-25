@@ -15,6 +15,9 @@ Prerequisites:
     - `POGO_APPLICATION_KEY`: Your PowerOfficeGo application key.
     - `POGO_CLIENT_ID`: Your PowerOfficeGo client ID.
     - `POGO_SUBSCRIPTION_KEY`: Your PowerOfficeGo subscription key.
+
+Usage:
+    uv run python examples/01_linked_service_connect.py
 """
 
 from __future__ import annotations
