@@ -6,9 +6,7 @@ This module contains dataset-related classes and functions for the PowerOfficeGo
 """
 
 import json
-from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Generic, TypeVar
 
 import pandas as pd
@@ -22,10 +20,16 @@ from ds_resource_plugin_py_lib.common.resource.errors import NotSupportedError
 from ds_resource_plugin_py_lib.common.serde.deserialize import PandasDeserializer
 from ds_resource_plugin_py_lib.common.serde.serialize import PandasSerializer
 
-from ..endpoint_info import EndpointInfo
 from ..enums import ResourceType
-from ..errors import InvalidIncrementalWatermarkException, UnsupportedIncrementalKindException
 from ..linked_service.powerofficego import PowerOfficeGoLinkedService
+from .products import trial_balance
+from .utils import (
+    build_checkpoint,
+    build_params,
+    build_url,
+    greatest_incremental_value,
+    records_from_body,
+)
 
 logger = Logger.get_logger(__name__, package=True)
 
@@ -38,7 +42,9 @@ class ReadSettings(Serializable):
     Attributes:
         page_size (int): Number of records to read per page. Default is 20,000.
         fields (list[str] | None): List of fields to include in the response. Optional.
-        filters (dict[str, Any] | None): Additional filters for the API request. Optional.
+        filters (dict[str, Any] | None): Query filters for the API request. Optional.
+            Product-specific keys (see ``TrialBalanceFilter``) are handled by
+            product modules and are not forwarded as native query params.
     """
 
     page_size: int = 20000
@@ -48,7 +54,21 @@ class ReadSettings(Serializable):
     """List of fields to include in the response. Optional."""
 
     filters: dict[str, Any] | None = None
-    """Additional filters for the API request. Optional."""
+    """Filters for the API request / product-specific read window.
+
+    Native PowerOffice query params are passed through. TrialBalance history
+    uses ``TrialBalanceFilter.DATE_FROM`` (required) and optional
+    ``TrialBalanceFilter.DATE_TO`` (ISO ``YYYY-MM-DD``; defaults to today).
+
+    Example:
+        >>> from ds_provider_powerofficego_py_lib.enums import TrialBalanceFilter
+        >>> ReadSettings(filters={TrialBalanceFilter.DATE_FROM: "2025-01-01"})
+        >>> ReadSettings(filters={
+        ...     TrialBalanceFilter.DATE_FROM: "2025-01-01",
+        ...     TrialBalanceFilter.DATE_TO: "2025-12-31",
+        ... })
+        >>> ReadSettings(filters={"date": "2025-12-31"})
+    """
 
 
 @dataclass(kw_only=True)
@@ -133,7 +153,7 @@ class PowerOfficeGoDataset(
         Raises:
             ReadError: If there is an error during the read operation.
         """
-        logger.info(f"Reading data from PowerOfficeGo dataset with settings: {self.settings}")
+        logger.info("Reading data from PowerOfficeGo dataset with settings: %s", self.settings)
         session = self.linked_service.connection
         self._fetch_data(session=session)
 
@@ -158,40 +178,64 @@ class PowerOfficeGoDataset(
     def purge(self) -> None:
         raise NotSupportedError("Method purge is not supported by PowerOfficeGo provider.")
 
+    def _resume_point(self) -> tuple[str | None, int]:
+        """
+        Derive the incremental watermark and starting page from ``self.checkpoint``.
+
+        Returns:
+            tuple[str | None, int]: ``(last_modified_date, page)``. A full load returns ``(None, 1)``.
+        """
+        last_modified_date = None
+        if self.checkpoint and "incremental" in self.checkpoint:
+            last_modified_date = self.checkpoint["incremental"].get("value")
+            logger.info("Resuming from checkpoint with from_date: %s", last_modified_date)
+
+        page = self.checkpoint["pagination"].get("value", 0) + 1 if self.checkpoint and "pagination" in self.checkpoint else 1
+        logger.info("%s load from page %s", "Resuming incremental" if self.checkpoint else "Starting full", page)
+        return last_modified_date, page
+
     def _fetch_data(self, session: Any) -> None:
         """
         Fetch data from PowerOfficeGo API using the provided session.
+
+        Product modules may take over for specialized reads (e.g. TrialBalance
+        history via ``filters.date_from``). Other products keep the single
+        paginated read.
 
         Args:
             session (Any): The session object to use for making API requests.
         Raises:
             ReadError: If there is an error during the data fetching process.
         """
-        logger.info(f"Fetching data from PowerOfficeGo API for data product: {self.settings.data_product}")
-        last_modified_date = None
-        if self.checkpoint and "incremental" in self.checkpoint:
-            logger.info(f"Resuming from checkpoint with from_date: {self.checkpoint['incremental'].get('value')}")
-            last_modified_date = self.checkpoint["incremental"].get("value")
+        logger.info("Fetching data from PowerOfficeGo API for data product: %s", self.settings.data_product)
+        filters = self.settings.read.filters
+        trial_balance.reject_if_misused(data_product=self.settings.data_product, filters=filters)
+        if trial_balance.handles(data_product=self.settings.data_product, filters=filters):
+            trial_balance.fetch_history(self, session)
+            return
 
-        page = self.checkpoint["pagination"].get("value", 0) + 1 if self.checkpoint and "pagination" in self.checkpoint else 1
-        logger.info("%s load from page %s", "Resuming incremental" if self.checkpoint else "Starting full", page)
+        last_modified_date, page = self._resume_point()
 
         all_records: list[dict[str, Any]] = []
         last_successful_page = page - 1
+        ls_settings = self.linked_service.settings
 
         try:
             while True:
-                params = self._build_params(page, last_modified_date=last_modified_date)
-                url = self._build_url()
-                logger.debug(f"Making API request to {url} with params: {params}")
+                params = build_params(self.settings, page, last_modified_date=last_modified_date)
+                url = build_url(
+                    host=ls_settings.host,
+                    api_version=ls_settings.api_version,
+                    data_product=self.settings.data_product,
+                )
+                logger.debug("Making API request to %s with params: %s", url, params)
                 response = session.get(url=url, params=params)
                 if response.status_code == 204:
                     logger.info("Received 204 No Content from API. Ending pagination.")
                     break
-                data = response.json()
-
-                all_records.extend(data)
-                logger.info(f"Fetched page {page} with {len(data)} records.")
+                page_records = records_from_body(response.json())
+                all_records.extend(page_records)
+                logger.info("Fetched page %s with %s records.", page, len(page_records))
 
                 last_successful_page = page
 
@@ -209,9 +253,9 @@ class PowerOfficeGoDataset(
                 page += 1
 
         except Exception as exc:
-            logger.error(f"Error occurred while fetching data: {exc}")
+            logger.error("Error occurred while fetching data: %s", exc)
             # On failure, only set last_page (do not update incremental/last_modified_date)
-            self.checkpoint = self._build_checkpoint(last_successful_page, last_modified_date=last_modified_date)
+            self.checkpoint = build_checkpoint(last_successful_page, last_modified_date=last_modified_date)
             raise ReadError(
                 message=f"Error occurred while fetching data: {exc}",
                 details={
@@ -225,7 +269,7 @@ class PowerOfficeGoDataset(
         else:
             # A completed read defines a new incremental boundary, so the next
             # run must restart pagination from the beginning of that boundary.
-            latest = self.greatest_incremental_value(
+            latest = greatest_incremental_value(
                 [record.get("LastChangedDateTimeOffset") for record in all_records if record.get("LastChangedDateTimeOffset")],
                 kind="LastChangedDateTimeOffset",
             )
@@ -239,134 +283,7 @@ class PowerOfficeGoDataset(
                 self.output = self.output.drop(columns="LastChangedDateTimeOffset", errors="ignore")
 
             # Only advance the checkpoint after the output has been built successfully.
-            self.checkpoint = self._build_checkpoint(0, last_modified_date=last_modified_date)
-
-    @staticmethod
-    def _parse_iso8601_timestamp(value: str) -> datetime:
-        """Parse an ISO-8601 timestamp string to an aware UTC datetime for comparison.
-        Handles up to 7 digits of fractional seconds by truncating to 6 (Python max)."""
-        normalized = value.replace("Z", "+00:00") if value.endswith("Z") else value
-        # Truncate fractional seconds to 6 digits if needed
-        if "." in normalized:
-            main, rest = normalized.split(".", 1)
-            # Find where the timezone offset starts (either + or - or nothing)
-            tz_pos = max(rest.find("+"), rest.find("-"))
-            if tz_pos != -1:
-                frac = rest[:tz_pos]
-                tz = rest[tz_pos:]
-            else:
-                frac = rest
-                tz = ""
-            if len(frac) > 6:
-                frac = frac[:6]
-            normalized = f"{main}.{frac}{tz}"
-        try:
-            parsed = datetime.fromisoformat(normalized)
-        except ValueError as exc:
-            msg = f"Unparseable time_field watermark: {value!r}"
-            raise InvalidIncrementalWatermarkException(message=msg, details={"value": value}) from exc
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-
-    def _greatest_time_field_value(self, values: Sequence[Any]) -> Any:
-        """Return the original value that sorts last by parsed UTC ``datetime``."""
-        if not values:
-            return None
-        parsed: list[tuple[datetime, Any]] = []
-        for raw in values:
-            if not isinstance(raw, str):
-                msg = f"LastChangedDateTimeOffset watermarks must be strings, got {type(raw).__name__}"
-                raise InvalidIncrementalWatermarkException(message=msg, details={"value": raw})
-            parsed.append((self._parse_iso8601_timestamp(raw), raw))
-        return max(parsed, key=lambda item: item[0])[1]
-
-    def greatest_incremental_value(self, values: Sequence[Any], *, kind: str) -> Any | None:
-        """Return the greatest watermark among observed values for the given strategy.
-
-        Args:
-            values: Non-empty sequence of observed watermark candidates (nulls should be
-                excluded by callers).
-            kind: Incremental strategy from metadata (e.g. ``time_field``).
-
-        Returns:
-            The winning original value from ``values``, or ``None`` when ``values`` is empty.
-
-        Raises:
-            InvalidIncrementalWatermarkException: When ``time_field`` values are not
-                strings or parsing fails.
-            UnsupportedIncrementalKindException: When ``kind`` is not supported.
-        """
-        if not values:
-            return None
-        if kind == "LastChangedDateTimeOffset":
-            return self._greatest_time_field_value(values)
-        raise UnsupportedIncrementalKindException(
-            message=f"Unsupported incremental kind: {kind!r}",
-            details={"kind": kind},
-        )
-
-    def _build_checkpoint(self, last_page: int | None, last_modified_date: str | None) -> dict[str, Any]:
-        """
-        Build a checkpoint dictionary to track the last successfully read page.
-
-        Include last_modified_date from read settings.
-
-        Args:
-            last_page (int | None): The last page number that was successfully read.
-            last_modified_date (str | None): The last modified date to include in the checkpoint.
-        Returns:
-            dict[str, Any]: A checkpoint dictionary containing the last page information.
-        """
-        checkpoint = {
-            "incremental": {"value": last_modified_date},  # or None
-            "pagination": {"value": last_page},  # or None when scope complete
-        }
-        logger.debug(f"Built checkpoint: {checkpoint}")
-        return checkpoint
-
-    def _build_params(self, page: int, last_modified_date: str | None) -> dict[str, Any]:
-        """
-        Build the query parameters for the PowerOfficeGo API request based on the dataset settings and pagination.
-
-        Args:
-            page (int): The page number to fetch.
-            last_modified_date (str | None): The last modified date to filter results.
-        Returns:
-            dict[str, Any]: A dictionary of query parameters for the API request.
-        """
-        params: dict[str, Any] = {
-            "PageNumber": page,
-            "PageSize": self.settings.read.page_size,
-        }
-        if self.settings.read.fields:
-            fields = ",".join(self.settings.read.fields)
-            if "LastChangedDateTimeOffset" not in self.settings.read.fields:
-                fields += ",LastChangedDateTimeOffset"
-        else:
-            fields = None
-
-        if last_modified_date:
-            params["lastChangedDateTimeOffsetGreaterThan"] = last_modified_date
-        if fields:
-            params["Fields"] = fields
-        if self.settings.read.filters:
-            params.update(self.settings.read.filters)
-        return params
-
-    def _build_url(self) -> str:
-        """
-        Build the URL for the PowerOfficeGo API request based on the dataset settings.
-
-        Returns:
-            str: The constructed URL for the API request.
-        """
-        base_url = self.linked_service.settings.host.rstrip("/") + "/"
-        api_version = self.linked_service.settings.api_version.strip("/")
-        endpoint = str(EndpointInfo.get_endpoint_for_product(self.settings.data_product)).strip("/")
-        url = base_url + "/".join((api_version, endpoint))
-        logger.debug(f"Constructed URL for PowerOfficeGo API request: {url}")
-        return str(url)
+            self.checkpoint = build_checkpoint(0, last_modified_date=last_modified_date)
 
     def close(self) -> None:
         """
